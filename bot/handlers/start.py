@@ -19,7 +19,7 @@ async def show_panel(message: Message, user_id: int) -> None:
         if not groups and user_id == settings.owner_id:
             await message.answer(
                 "📌 <b>Activity Manager Panel</b>\n\n"
-                "Добавьте меня в группу как администратора и нажмите кнопку ниже:",
+                "Сначала нажмите кнопку ниже, затем добавьте меня в группу как администратора:",
                 reply_markup=keyboards.setup(),
             )
             return

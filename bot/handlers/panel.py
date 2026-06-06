@@ -27,6 +27,7 @@ from bot.middleware.admin import require_group_admin, require_group_owner
 from bot.services.cleanup import CleanupService
 from bot.services.reports import ReportService, format_inactive_list, format_stats, format_user_line
 from bot.services.warnings import WarningService
+from bot.services.binding import start_bind
 from bot.states import PanelStates
 
 logger = logging.getLogger(__name__)
@@ -48,13 +49,16 @@ async def _edit_or_answer(callback: CallbackQuery, text: str, markup=None) -> No
 
 @router.callback_query(GroupCb.filter(F.action == "bind"))
 async def bind_group_start(callback: CallbackQuery, state: FSMContext) -> None:
+    start_bind(callback.from_user.id)
     await state.set_state(PanelStates.waiting_bind)
     await _edit_or_answer(
         callback,
         "🔗 <b>Привязка группы</b>\n\n"
-        "1. Добавьте бота в группу\n"
-        "2. Назначьте бота администратором\n"
-        "3. Бот автоматически привяжет группу",
+        "1. <b>Сначала</b> нажмите эту кнопку (уже сделано ✅)\n"
+        "2. Добавьте бота в группу\n"
+        "3. Назначьте бота администратором\n\n"
+        "Если бот уже в группе — снимите с админа и назначьте снова,\n"
+        "или удалите из группы и добавьте заново.",
         keyboards.setup(),
     )
     await callback.answer()
