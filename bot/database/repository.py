@@ -89,6 +89,33 @@ class GroupRepository:
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
+    async def unbind_group(self, group_id: int) -> bool:
+        group = await self.get(group_id)
+        if not group:
+            return False
+
+        owner_id = group.owner_id
+        was_primary = group.is_primary
+
+        await self.session.execute(delete(CleanupBackup).where(CleanupBackup.group_id == group_id))
+        await self.session.delete(group)
+
+        if was_primary:
+            stmt = (
+                select(Group)
+                .join(Admin, Admin.group_id == Group.group_id)
+                .where(Admin.user_id == owner_id)
+                .order_by(Group.title)
+                .limit(1)
+            )
+            result = await self.session.execute(stmt)
+            next_group = result.scalar_one_or_none()
+            if next_group:
+                next_group.is_primary = True
+
+        await self.session.commit()
+        return True
+
     async def transfer_owner(self, group_id: int, old_owner_id: int, new_owner_id: int) -> None:
         await self.session.execute(
             update(Group).where(Group.group_id == group_id).values(owner_id=new_owner_id)
@@ -316,6 +343,43 @@ class UserRepository:
         )
         return count or 0
 
+    def _zero_activity_filters(self, group_id: int, membership_period: timedelta | int):
+        td = timedelta(days=membership_period) if isinstance(membership_period, int) else membership_period
+        cutoff = utcnow() - td
+        return (
+            User.group_id == group_id,
+            User.is_active.is_(True),
+            User.whitelisted.is_(False),
+            User.messages_count == 0,
+            User.reactions_count == 0,
+            User.join_date <= cutoff,
+        )
+
+    async def get_zero_activity(
+        self,
+        group_id: int,
+        membership_period: timedelta | int,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[User]:
+        stmt = (
+            select(User)
+            .where(*self._zero_activity_filters(group_id, membership_period))
+            .order_by(User.join_date)
+            .limit(limit)
+            .offset(offset)
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def count_zero_activity(self, group_id: int, membership_period: timedelta | int) -> int:
+        count = await self.session.scalar(
+            select(func.count()).select_from(User).where(
+                *self._zero_activity_filters(group_id, membership_period)
+            )
+        )
+        return count or 0
+
     async def get_top_active(self, group_id: int, limit: int = 10) -> list[User]:
         stmt = (
             select(User)
@@ -388,6 +452,65 @@ class UserRepository:
         stmt = select(User).where(User.group_id == group_id, User.is_active.is_(True))
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
+
+    async def list_all_users(self, group_id: int) -> list[User]:
+        stmt = select(User).where(User.group_id == group_id).order_by(User.user_id)
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def list_known_user_ids(self, group_id: int) -> set[int]:
+        user_ids = await self.session.scalars(
+            select(User.user_id).where(User.group_id == group_id)
+        )
+        backup_ids = await self.session.scalars(
+            select(CleanupBackup.user_id).where(CleanupBackup.group_id == group_id).distinct()
+        )
+        return set(user_ids.all()) | set(backup_ids.all())
+
+    async def count_active_users(self, group_id: int) -> int:
+        count = await self.session.scalar(
+            select(func.count()).select_from(User).where(
+                User.group_id == group_id,
+                User.is_active.is_(True),
+            )
+        )
+        return count or 0
+
+    async def upsert_parsed_member(
+        self,
+        group_id: int,
+        user_id: int,
+        username: str | None,
+        first_name: str,
+    ) -> tuple[User, bool]:
+        existing = await self.get_user(group_id, user_id)
+        if existing:
+            await self.session.execute(
+                update(User)
+                .where(User.group_id == group_id, User.user_id == user_id)
+                .values(
+                    username=username,
+                    first_name=first_name,
+                    is_active=True,
+                )
+            )
+            await self.session.commit()
+            return existing, False
+
+        stale = utcnow() - timedelta(days=3650)
+        stmt = insert(User).values(
+            group_id=group_id,
+            user_id=user_id,
+            username=username,
+            first_name=first_name,
+            join_date=stale,
+            last_activity=stale,
+        )
+        await self.session.execute(stmt)
+        await self.session.commit()
+        user = await self.get_user(group_id, user_id)
+        assert user is not None
+        return user, True
 
 
 class BotStateRepository:

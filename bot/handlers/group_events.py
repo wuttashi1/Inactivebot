@@ -12,6 +12,7 @@ from bot.database.engine import async_session
 from bot.database.repository import GroupRepository, UserRepository
 from bot.keyboards.menus import keyboards
 from bot.services.binding import finish_bind, is_pending
+from bot.services.member_parse import MemberParseService
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -66,6 +67,18 @@ async def _try_bind_group(event: ChatMemberUpdated, bot: Bot, state: FSMContext)
         logger.warning("Cannot notify binder %s: %s", adder_id, exc)
 
     logger.info("Group %s bound by user %s", chat.id, adder_id)
+
+    try:
+        parse_result = await MemberParseService(bot).parse_group(chat.id)
+        logger.info(
+            "Initial member parse for %s: added=%s admins=%s active=%s",
+            chat.id,
+            parse_result.added,
+            parse_result.admins_synced,
+            parse_result.db_active_after,
+        )
+    except Exception as exc:
+        logger.warning("Initial member parse failed for %s: %s", chat.id, exc)
 
 
 @router.my_chat_member(ChatMemberUpdatedFilter(IS_NOT_MEMBER >> IS_MEMBER))
@@ -135,3 +148,16 @@ async def member_joined(event: ChatMemberUpdated) -> None:
             user.username,
             user.full_name,
         )
+
+
+@router.chat_member(ChatMemberUpdatedFilter(IS_MEMBER >> IS_NOT_MEMBER))
+async def member_left(event: ChatMemberUpdated) -> None:
+    if not event.new_chat_member.user or event.new_chat_member.user.is_bot:
+        return
+    chat_id = event.chat.id
+    user_id = event.new_chat_member.user.id
+    async with async_session() as session:
+        group = await GroupRepository(session).get(chat_id)
+        if not group:
+            return
+        await UserRepository(session).mark_removed(chat_id, user_id)

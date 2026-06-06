@@ -16,7 +16,14 @@ from bot.handlers.command_helpers import (
 from bot.keyboards.menus import keyboards
 from bot.services.binding import start_bind
 from bot.services.cleanup import CleanupService
-from bot.services.reports import ReportService, format_inactive_list, format_stats, format_user_line
+from bot.services.member_parse import MemberParseService, format_parse_result
+from bot.services.reports import (
+    ReportService,
+    format_inactive_list,
+    format_stats,
+    format_user_line,
+    format_zero_activity_list,
+)
 from bot.services.warnings import WarningService
 from bot.utils.duration import DurationParseError, format_duration, parse_duration
 
@@ -27,12 +34,16 @@ HELP_TEXT = (
     "📖 <b>Команды Activity Manager</b>\n\n"
     "<b>Группа</b>\n"
     "/bind — привязать группу\n"
+    "/unbind confirm — отвязать группу от бота\n"
     "/stats — статистика\n\n"
     "<b>Активность</b> (свой период: 4sec, 5h, 30d, 2w)\n"
     "/inactive 30d — список неактивных\n"
     "/warninactive 5h — уведомить неактивных\n"
     "/cleaninactive 14d preview — просмотр\n"
     "/cleaninactive 14d confirm — удалить\n"
+    "/zero 30d — 0 сообщений и 0 реакций, в группе ≥30д\n"
+    "/cleanzero 30d preview — просмотр кика\n"
+    "/cleanzero 30d confirm — кикнуть таких\n"
     "/rollcall — перекличка\n\n"
     "<b>Настройки</b>\n"
     "/autoclean on|off — вкл/выкл автоочистку\n"
@@ -48,6 +59,8 @@ HELP_TEXT = (
     "<b>Отчёты</b>\n"
     "/weeklyreport — за неделю\n"
     "/monthlyreport — за месяц\n\n"
+    "<b>Участники</b>\n"
+    "/parsemembers — синхронизировать всех известных участников с базой\n\n"
     "Единицы: <code>sec/s</code>, <code>min/m</code>, <code>h</code>, <code>d</code>, <code>w</code>\n"
     "Число без единицы = дни (например <code>/inactive 7</code>)"
 )
@@ -56,16 +69,20 @@ BOT_COMMANDS = [
     BotCommand(command="start", description="Открыть панель"),
     BotCommand(command="help", description="Список команд"),
     BotCommand(command="bind", description="Привязать группу"),
+    BotCommand(command="unbind", description="Отвязать группу"),
     BotCommand(command="stats", description="Статистика"),
     BotCommand(command="inactive", description="Неактивные (период)"),
     BotCommand(command="warninactive", description="Уведомить неактивных"),
     BotCommand(command="cleaninactive", description="Очистка неактивных"),
+    BotCommand(command="zero", description="Участники с 0 активностью"),
+    BotCommand(command="cleanzero", description="Кик 0 активности"),
     BotCommand(command="rollcall", description="Перекличка"),
     BotCommand(command="autoclean", description="Автоочистка"),
     BotCommand(command="admins", description="Список админов"),
     BotCommand(command="whitelist", description="Белый список"),
     BotCommand(command="weeklyreport", description="Отчёт за неделю"),
     BotCommand(command="monthlyreport", description="Отчёт за месяц"),
+    BotCommand(command="parsemembers", description="Синхронизация участников"),
 ]
 
 
@@ -91,6 +108,46 @@ async def cmd_bind(message: Message) -> None:
         "2. Назначьте администратором\n\n"
         "Если бот уже в группе — снимите и назначьте админом снова.",
         reply_markup=keyboards.setup(),
+    )
+
+
+@router.message(Command("unbind"))
+async def cmd_unbind(message: Message, command: CommandObject) -> None:
+    group_id = await ensure_owner(message)
+    if not group_id:
+        return
+
+    args = command_args(message, command)
+    if not args or args[0].lower() != "confirm":
+        async with async_session() as session:
+            group = await GroupRepository(session).get(group_id)
+        title = group.title if group else str(group_id)
+        await message.answer(
+            f"🔓 <b>Отвязка группы</b>\n\n"
+            f"Группа: <b>{title}</b>\n"
+            f"ID: <code>{group_id}</code>\n\n"
+            "Бот перестанет отслеживать активность. "
+            "Все данные группы в базе будут удалены.\n"
+            "Сам бот останется в Telegram-группе — удалите его вручную, если нужно.\n\n"
+            "Для подтверждения отправьте:\n<code>/unbind confirm</code>"
+        )
+        return
+
+    async with async_session() as session:
+        group = await GroupRepository(session).get(group_id)
+        if not group:
+            await message.answer("❌ Группа уже отвязана.")
+            return
+        title = group.title
+        ok = await GroupRepository(session).unbind_group(group_id)
+
+    if not ok:
+        await message.answer("❌ Не удалось отвязать группу.")
+        return
+
+    await message.answer(
+        f"✅ Группа <b>{title}</b> отвязана.\n\n"
+        "Для повторной привязки используйте /bind"
     )
 
 
@@ -196,6 +253,83 @@ async def cmd_cleaninactive(message: Message, command: CommandObject, bot: Bot) 
         await bot.send_message(group_id, report)
     except Exception as exc:
         logger.warning("Cleanup report to group failed: %s", exc)
+
+
+@router.message(Command("zero"))
+async def cmd_zero(message: Message, command: CommandObject) -> None:
+    group_id = await ensure_admin(message)
+    if not group_id:
+        return
+    args = command_args(message, command)
+    try:
+        period = _parse_period_arg(args, "30d")
+    except DurationParseError as exc:
+        await message.answer(f"❌ {exc}")
+        return
+    async with async_session() as session:
+        users = await UserRepository(session).get_zero_activity(group_id, period)
+    label = format_duration(period)
+    await message.answer(
+        format_zero_activity_list(users, period, f"👤 0 активности, в группе ≥{label}")
+    )
+
+
+@router.message(Command("cleanzero"))
+async def cmd_cleanzero(message: Message, command: CommandObject, bot: Bot) -> None:
+    group_id = await ensure_admin(message)
+    if not group_id:
+        return
+    args = command_args(message, command)
+    if not args:
+        await message.answer(
+            "Использование:\n"
+            "<code>/cleanzero 30d preview</code>\n"
+            "<code>/cleanzero 30d confirm</code>"
+        )
+        return
+
+    mode = args[-1].lower() if len(args) > 1 else "preview"
+    period_args = args[:-1] if len(args) > 1 else args
+    if mode not in ("preview", "confirm"):
+        period_args = args
+        mode = "preview"
+
+    try:
+        period = _parse_period_arg(period_args, "30d")
+    except DurationParseError as exc:
+        await message.answer(f"❌ {exc}")
+        return
+
+    label = format_duration(period)
+    async with async_session() as session:
+        service = CleanupService(session, bot)
+        if mode == "preview":
+            users = await service.preview_zero(group_id, period)
+            await message.answer(
+                format_zero_activity_list(users, period, f"👁 На кик (0 активности, ≥{label})")
+            )
+            return
+
+        result = await service.execute_zero(group_id, period)
+
+    lines = [
+        f"🧹 <b>Кик завершён</b> (0 активности, в группе ≥{label})\n",
+        f"✅ Удалено: <b>{len(result.removed)}</b>",
+        f"⏭ Пропущено: <b>{len(result.skipped)}</b>",
+        f"❌ Ошибок: <b>{len(result.failed)}</b>",
+    ]
+    if result.removed:
+        lines.append("\n<b>Удалённые:</b>")
+        for i, u in enumerate(result.removed[:15], 1):
+            lines.append(format_user_line(u, i))
+    report = "\n".join(lines)
+    await message.answer(report)
+    if message.chat.type in ("group", "supergroup"):
+        return
+    try:
+        await bot.send_message(group_id, report)
+    except Exception as exc:
+        logger.warning("Cleanzero report to group failed: %s", exc)
 
 
 @router.message(Command("rollcall"))
@@ -363,6 +497,20 @@ async def cmd_monthlyreport(message: Message) -> None:
     async with async_session() as session:
         text = await ReportService(session).monthly(group_id)
     await message.answer(text)
+
+
+@router.message(Command("parsemembers"))
+async def cmd_parsemembers(message: Message, bot: Bot) -> None:
+    group_id = await ensure_admin(message)
+    if not group_id:
+        return
+    status = await message.answer("⏳ Синхронизация участников с Telegram…")
+    try:
+        result = await MemberParseService(bot).parse_group(group_id)
+        await status.edit_text(format_parse_result(result))
+    except Exception as exc:
+        logger.exception("parsemembers failed for %s: %s", group_id, exc)
+        await status.edit_text("❌ Не удалось синхронизировать участников. Проверьте права бота в группе.")
 
 
 async def setup_bot_commands(bot: Bot) -> None:

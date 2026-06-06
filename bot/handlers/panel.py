@@ -19,6 +19,7 @@ from bot.callbacks import (
     RollcallCb,
     WarnCb,
     WhitelistCb,
+    ZeroCleanCb,
 )
 from bot.database.engine import async_session
 from bot.database.models import Admin, Group, User
@@ -26,8 +27,16 @@ from bot.database.repository import AdminRepository, GroupRepository, UserReposi
 from bot.keyboards.menus import keyboards
 from bot.middleware.admin import require_group_admin, require_group_owner
 from bot.services.cleanup import CleanupService
-from bot.services.reports import ReportService, format_inactive_list, format_stats, format_user_line
+from bot.services.member_parse import MemberParseService, format_parse_result
+from bot.services.reports import (
+    ReportService,
+    format_inactive_list,
+    format_stats,
+    format_user_line,
+    format_zero_activity_list,
+)
 from bot.services.warnings import WarningService
+from bot.handlers.start import show_panel
 from bot.services.binding import start_bind
 from bot.states import PanelStates
 from bot.utils.duration import DurationParseError, format_duration, parse_duration
@@ -151,6 +160,25 @@ async def members_actions(callback: CallbackQuery, callback_data: MembersCb) -> 
     if not await require_group_admin(callback_data.group_id, callback.from_user.id):
         await _deny(callback)
         return
+    if callback_data.action == "parse":
+        await callback.answer("Синхронизация запущена…")
+        await _edit_or_answer(callback, "⏳ Синхронизация участников с Telegram…")
+        try:
+            result = await MemberParseService(callback.bot).parse_group(callback_data.group_id)
+            await _edit_or_answer(
+                callback,
+                format_parse_result(result),
+                keyboards.members_menu(callback_data.group_id),
+            )
+        except Exception as exc:
+            logger.exception("Member parse failed for %s: %s", callback_data.group_id, exc)
+            await _edit_or_answer(
+                callback,
+                "❌ Не удалось синхронизировать участников.",
+                keyboards.members_menu(callback_data.group_id),
+            )
+        return
+
     async with async_session() as session:
         repo = UserRepository(session)
         if callback_data.action == "top_active":
@@ -166,6 +194,9 @@ async def members_actions(callback: CallbackQuery, callback_data: MembersCb) -> 
         elif callback_data.action in ("candidates", "inactive"):
             users = await repo.get_inactive(callback_data.group_id, callback_data.days)
             text = format_inactive_list(users, callback_data.days)
+        elif callback_data.action == "zero":
+            users = await repo.get_zero_activity(callback_data.group_id, callback_data.days)
+            text = format_zero_activity_list(users, callback_data.days)
         else:
             await callback.answer()
             return
@@ -249,6 +280,90 @@ async def clean_confirm(callback: CallbackQuery, callback_data: CleanCb, bot: Bo
 @router.callback_query(CleanCb.filter(F.action == "cancel"))
 async def clean_cancel(callback: CallbackQuery, callback_data: CleanCb) -> None:
     await menu_main(callback, MenuCb(action="main", group_id=callback_data.group_id))
+
+
+@router.callback_query(ZeroCleanCb.filter(F.action == "menu"))
+async def zero_clean_menu(callback: CallbackQuery, callback_data: ZeroCleanCb) -> None:
+    if not await require_group_admin(callback_data.group_id, callback.from_user.id):
+        await _deny(callback)
+        return
+    await _edit_or_answer(
+        callback,
+        "0️⃣ <b>Кик участников с нулевой активностью</b>\n\n"
+        "Удаляются те, у кого <b>0 сообщений</b> и <b>0 реакций</b>, "
+        "и кто в базе не короче выбранного срока.\n\n"
+        "Сначала выполните <code>/parsemembers</code>, чтобы подтянуть участников.",
+        keyboards.zero_clean_periods(callback_data.group_id),
+    )
+    await callback.answer()
+
+
+@router.callback_query(ZeroCleanCb.filter(F.action == "period"))
+async def zero_clean_period(callback: CallbackQuery, callback_data: ZeroCleanCb) -> None:
+    if not await require_group_admin(callback_data.group_id, callback.from_user.id):
+        await _deny(callback)
+        return
+    async with async_session() as session:
+        count = await UserRepository(session).count_zero_activity(
+            callback_data.group_id,
+            callback_data.days,
+        )
+    await _edit_or_answer(
+        callback,
+        f"⚠️ Найдено: <b>{count}</b> с 0 активностью (в группе ≥{callback_data.days} дн.)",
+        keyboards.zero_clean_confirm(callback_data.group_id, callback_data.days, count),
+    )
+    await callback.answer()
+
+
+@router.callback_query(ZeroCleanCb.filter(F.action == "preview"))
+async def zero_clean_preview(callback: CallbackQuery, callback_data: ZeroCleanCb, bot: Bot) -> None:
+    if not await require_group_admin(callback_data.group_id, callback.from_user.id):
+        await _deny(callback)
+        return
+    async with async_session() as session:
+        service = CleanupService(session, bot)
+        users = await service.preview_zero(callback_data.group_id, callback_data.days)
+    await _edit_or_answer(
+        callback,
+        format_zero_activity_list(users, callback_data.days, "👁 Список на кик"),
+        keyboards.zero_clean_confirm(callback_data.group_id, callback_data.days, len(users)),
+    )
+    await callback.answer()
+
+
+@router.callback_query(ZeroCleanCb.filter(F.action == "confirm"))
+async def zero_clean_confirm(callback: CallbackQuery, callback_data: ZeroCleanCb, bot: Bot) -> None:
+    if not await require_group_admin(callback_data.group_id, callback.from_user.id):
+        await _deny(callback)
+        return
+    await callback.answer("⏳ Выполняется кик...")
+    async with async_session() as session:
+        service = CleanupService(session, bot)
+        result = await service.execute_zero(callback_data.group_id, callback_data.days)
+
+    lines = [
+        f"🧹 <b>Кик завершён</b> (0 активности, ≥{callback_data.days} дн.)\n",
+        f"✅ Удалено: <b>{len(result.removed)}</b>",
+        f"⏭ Пропущено: <b>{len(result.skipped)}</b>",
+        f"❌ Ошибок: <b>{len(result.failed)}</b>",
+    ]
+    if result.removed:
+        lines.append("\n<b>Удалённые:</b>")
+        for i, u in enumerate(result.removed[:20], 1):
+            lines.append(format_user_line(u, i))
+
+    report = "\n".join(lines)
+    await _edit_or_answer(callback, report, keyboards.back(callback_data.group_id))
+    try:
+        await bot.send_message(callback_data.group_id, report)
+    except Exception as exc:
+        logger.warning("Cannot post zero clean report to group: %s", exc)
+
+
+@router.callback_query(ZeroCleanCb.filter(F.action == "cancel"))
+async def zero_clean_cancel(callback: CallbackQuery, callback_data: ZeroCleanCb) -> None:
+    await menu_clean(callback, MenuCb(action="clean", group_id=callback_data.group_id))
 
 
 @router.callback_query(MenuCb.filter(F.action == "settings"))
@@ -571,6 +686,51 @@ async def owner_transfer_start(callback: CallbackQuery, callback_data: OwnerCb, 
     await state.update_data(group_id=callback_data.group_id)
     await _edit_or_answer(callback, "👤 Отправьте ID нового владельца:", keyboards.owner_menu(callback_data.group_id))
     await callback.answer()
+
+
+@router.callback_query(OwnerCb.filter(F.action == "unbind"))
+async def owner_unbind_prompt(callback: CallbackQuery, callback_data: OwnerCb) -> None:
+    if not await require_group_owner(callback_data.group_id, callback.from_user.id):
+        await _deny(callback)
+        return
+    async with async_session() as session:
+        group = await GroupRepository(session).get(callback_data.group_id)
+    if not group:
+        await callback.answer("Группа уже отвязана", show_alert=True)
+        return
+    await _edit_or_answer(
+        callback,
+        f"🔓 <b>Отвязать группу?</b>\n\n"
+        f"Группа: <b>{group.title}</b>\n"
+        f"ID: <code>{group.group_id}</code>\n\n"
+        "Бот перестанет отслеживать активность. "
+        "Все данные группы в базе будут удалены.\n"
+        "Сам бот останется в Telegram-группе.",
+        keyboards.unbind_confirm(callback_data.group_id),
+    )
+    await callback.answer()
+
+
+@router.callback_query(OwnerCb.filter(F.action == "unbind_confirm"))
+async def owner_unbind_confirm(callback: CallbackQuery, callback_data: OwnerCb) -> None:
+    if not await require_group_owner(callback_data.group_id, callback.from_user.id):
+        await _deny(callback)
+        return
+    async with async_session() as session:
+        group = await GroupRepository(session).get(callback_data.group_id)
+        if not group:
+            await callback.answer("Группа уже отвязана", show_alert=True)
+            return
+        title = group.title
+        ok = await GroupRepository(session).unbind_group(callback_data.group_id)
+
+    if not ok:
+        await callback.answer("❌ Не удалось отвязать", show_alert=True)
+        return
+
+    await callback.answer("✅ Группа отвязана")
+    await callback.message.answer(f"✅ Группа <b>{title}</b> отвязана от бота.")
+    await show_panel(callback.message, callback.from_user.id)
 
 
 @router.callback_query(OwnerCb.filter(F.action == "reset"))

@@ -13,6 +13,7 @@ from bot.callbacks import (
     ReportCb,
     RollcallCb,
     WarnCb,
+    ZeroCleanCb,
 )
 from bot.database.models import Group
 
@@ -77,9 +78,11 @@ class Keyboards:
     def members_menu(group_id: int) -> InlineKeyboardMarkup:
         builder = InlineKeyboardBuilder()
         items = [
+            ("🔄 Синхронизировать участников", MembersCb(action="parse", group_id=group_id)),
             ("🔥 Топ активных", MembersCb(action="top_active", group_id=group_id)),
             ("📉 Топ неактивных", MembersCb(action="top_inactive", group_id=group_id)),
             ("⚠️ Кандидаты на удаление", MembersCb(action="candidates", group_id=group_id, days=30)),
+            ("0️⃣ Нулевая активность 30д", MembersCb(action="zero", group_id=group_id, days=30)),
             ("⏳ Неактив 7д", MembersCb(action="inactive", group_id=group_id, days=7)),
             ("⏳ Неактив 14д", MembersCb(action="inactive", group_id=group_id, days=14)),
             ("⏳ Неактив 30д", MembersCb(action="inactive", group_id=group_id, days=30)),
@@ -99,8 +102,43 @@ class Keyboards:
                 text=f"⏳ {days} дней",
                 callback_data=CleanCb(action="period", group_id=group_id, days=days).pack(),
             )
+        builder.button(
+            text="0️⃣ Кик 0 активности",
+            callback_data=ZeroCleanCb(action="menu", group_id=group_id).pack(),
+        )
         builder.button(text="⬅️ Назад", callback_data=MenuCb(action="main", group_id=group_id).pack())
         builder.adjust(2)
+        return builder.as_markup()
+
+    @staticmethod
+    def zero_clean_periods(group_id: int) -> InlineKeyboardMarkup:
+        builder = InlineKeyboardBuilder()
+        for days in (7, 14, 30, 60):
+            builder.button(
+                text=f"⏳ ≥{days} дней, 0 активности",
+                callback_data=ZeroCleanCb(action="period", group_id=group_id, days=days).pack(),
+            )
+        builder.button(text="⬅️ Назад", callback_data=MenuCb(action="clean", group_id=group_id).pack())
+        builder.adjust(1)
+        return builder.as_markup()
+
+    @staticmethod
+    def zero_clean_confirm(group_id: int, days: int, count: int) -> InlineKeyboardMarkup:
+        builder = InlineKeyboardBuilder()
+        builder.button(
+            text="👁 Просмотр списка",
+            callback_data=ZeroCleanCb(action="preview", group_id=group_id, days=days).pack(),
+        )
+        if count > 0:
+            builder.button(
+                text="🧹 Кикнуть",
+                callback_data=ZeroCleanCb(action="confirm", group_id=group_id, days=days).pack(),
+            )
+        builder.button(
+            text="❌ Отмена",
+            callback_data=ZeroCleanCb(action="cancel", group_id=group_id).pack(),
+        )
+        builder.adjust(1)
         return builder.as_markup()
 
     @staticmethod
@@ -214,7 +252,19 @@ class Keyboards:
         builder.button(text="🗂 Все группы", callback_data=OwnerCb(action="groups", group_id=group_id).pack())
         builder.button(text="👤 Передать владельца", callback_data=OwnerCb(action="transfer", group_id=group_id).pack())
         builder.button(text="🧨 Полный сброс", callback_data=OwnerCb(action="reset", group_id=group_id).pack())
+        builder.button(text="🔓 Отвязать группу", callback_data=OwnerCb(action="unbind", group_id=group_id).pack())
         builder.button(text="⬅️ Назад", callback_data=MenuCb(action="main", group_id=group_id).pack())
+        builder.adjust(1)
+        return builder.as_markup()
+
+    @staticmethod
+    def unbind_confirm(group_id: int) -> InlineKeyboardMarkup:
+        builder = InlineKeyboardBuilder()
+        builder.button(
+            text="✅ Да, отвязать",
+            callback_data=OwnerCb(action="unbind_confirm", group_id=group_id).pack(),
+        )
+        builder.button(text="❌ Отмена", callback_data=OwnerCb(action="groups", group_id=group_id).pack())
         builder.adjust(1)
         return builder.as_markup()
 

@@ -27,6 +27,31 @@ def format_stats(stats: dict) -> str:
     )
 
 
+def format_zero_activity_list(
+    users: list,
+    membership_period: timedelta | int,
+    title: str | None = None,
+) -> str:
+    label = (
+        format_duration(timedelta(days=membership_period))
+        if isinstance(membership_period, int)
+        else format_duration(membership_period)
+    )
+    header = title or f"👤 В группе ≥{label}, 0 сообщений и 0 реакций"
+    if not users:
+        return f"{header}\n\n✅ Таких участников не найдено."
+    lines = [f"{header}\n", f"Найдено: <b>{len(users)}</b>\n"]
+    for i, u in enumerate(users[:30], 1):
+        joined = u.join_date.strftime("%d.%m.%Y")
+        lines.append(
+            f"{i}. <b>{u.first_name}</b> (@{u.username or '—'})\n"
+            f"   💬 0 | 👍 0 | 📅 в базе с {joined}"
+        )
+    if len(users) > 30:
+        lines.append(f"\n... и ещё {len(users) - 30}")
+    return "\n".join(lines)
+
+
 def format_inactive_list(
     users: list,
     period: timedelta | int,

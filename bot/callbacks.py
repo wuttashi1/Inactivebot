@@ -12,6 +12,12 @@ class CleanCb(CallbackData, prefix="cl"):
     days: int = 0
 
 
+class ZeroCleanCb(CallbackData, prefix="zc"):
+    action: str  # period | preview | confirm | cancel
+    group_id: int
+    days: int = 0
+
+
 class WarnCb(CallbackData, prefix="wn"):
     action: str  # period | send
     group_id: int
@@ -38,7 +44,7 @@ class WhitelistCb(CallbackData, prefix="wl"):
 
 
 class MembersCb(CallbackData, prefix="mb"):
-    action: str  # top_active | top_inactive | candidates | inactive
+    action: str  # parse | top_active | top_inactive | candidates | inactive | zero
     group_id: int
     days: int = 30
 
@@ -49,7 +55,7 @@ class GroupCb(CallbackData, prefix="gr"):
 
 
 class OwnerCb(CallbackData, prefix="ow"):
-    action: str  # groups | reset | transfer
+    action: str  # groups | reset | transfer | unbind | unbind_confirm
     group_id: int = 0
 
 

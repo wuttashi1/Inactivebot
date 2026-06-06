@@ -79,6 +79,9 @@ class SyncService:
         )
         return result
 
+    async def drain_pending_updates(self) -> tuple[int, dict[str, int]]:
+        return await self._drain_pending_updates()
+
     async def _drain_pending_updates(self) -> tuple[int, dict[str, int]]:
         counters = {"messages": 0, "reactions": 0, "joins": 0}
         total = 0
