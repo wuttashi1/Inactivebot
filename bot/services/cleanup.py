@@ -1,0 +1,66 @@
+import logging
+from dataclasses import dataclass
+
+from aiogram import Bot
+from aiogram.enums import ChatMemberStatus
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from bot.database.models import User
+from bot.database.repository import UserRepository
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class CleanupResult:
+    removed: list[User]
+    skipped: list[tuple[User, str]]
+    failed: list[tuple[User, str]]
+
+
+class CleanupService:
+    def __init__(self, session: AsyncSession, bot: Bot) -> None:
+        self.session = session
+        self.bot = bot
+        self.users = UserRepository(session)
+
+    async def _should_skip(self, group_id: int, user: User) -> str | None:
+        if user.whitelisted:
+            return "whitelist"
+        try:
+            member = await self.bot.get_chat_member(group_id, user.user_id)
+        except (TelegramBadRequest, TelegramForbiddenError):
+            return "unreachable"
+
+        if member.status == ChatMemberStatus.CREATOR:
+            return "owner"
+        if member.status == ChatMemberStatus.ADMINISTRATOR:
+            return "admin"
+        return None
+
+    async def preview(self, group_id: int, days: int) -> list[User]:
+        return await self.users.get_inactive(group_id, days, limit=100)
+
+    async def execute(self, group_id: int, days: int) -> CleanupResult:
+        candidates = await self.users.get_inactive(group_id, days, limit=500)
+        removed: list[User] = []
+        skipped: list[tuple[User, str]] = []
+        failed: list[tuple[User, str]] = []
+
+        for user in candidates:
+            reason = await self._should_skip(group_id, user)
+            if reason:
+                skipped.append((user, reason))
+                continue
+            try:
+                await self.bot.ban_chat_member(group_id, user.user_id)
+                await self.bot.unban_chat_member(group_id, user.user_id)
+                await self.users.save_cleanup_backup(group_id, user)
+                await self.users.mark_removed(group_id, user.user_id)
+                removed.append(user)
+            except (TelegramBadRequest, TelegramForbiddenError) as exc:
+                logger.warning("Failed to remove user %s: %s", user.user_id, exc)
+                failed.append((user, str(exc)))
+
+        return CleanupResult(removed=removed, skipped=skipped, failed=failed)

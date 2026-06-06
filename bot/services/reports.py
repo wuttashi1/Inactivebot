@@ -1,0 +1,99 @@
+from datetime import timedelta
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from bot.database.repository import UserRepository, utcnow
+
+
+def format_user_line(user, index: int | None = None) -> str:
+    prefix = f"{index}. " if index is not None else ""
+    username = f"@{user.username}" if user.username else "—"
+    last = user.last_activity.strftime("%d.%m.%Y")
+    return (
+        f"{prefix}<b>{user.first_name}</b> ({username})\n"
+        f"   💬 {user.messages_count} | 👍 {user.reactions_count} | 🕐 {last}"
+    )
+
+
+def format_stats(stats: dict) -> str:
+    return (
+        "📊 <b>Статистика группы</b>\n\n"
+        f"👥 Всего участников: <b>{stats['total']}</b>\n"
+        f"🟢 Активных за 7 дней: <b>{stats['active_7']}</b>\n"
+        f"🟢 Активных за 30 дней: <b>{stats['active_30']}</b>\n"
+        f"🔴 Неактивных: <b>{stats['inactive']}</b>\n"
+        f"🆕 Новых за неделю: <b>{stats['new_week']}</b>"
+    )
+
+
+def format_inactive_list(users: list, days: int, title: str | None = None) -> str:
+    header = title or f"👥 Неактивные более {days} дней"
+    if not users:
+        return f"{header}\n\n✅ Неактивных не найдено."
+    lines = [f"{header}\n", f"Найдено: <b>{len(users)}</b>\n"]
+    for i, u in enumerate(users[:30], 1):
+        lines.append(format_user_line(u, i))
+    if len(users) > 30:
+        lines.append(f"\n... и ещё {len(users) - 30}")
+    return "\n".join(lines)
+
+
+class ReportService:
+    def __init__(self, session: AsyncSession) -> None:
+        self.users = UserRepository(session)
+
+    async def weekly(self, group_id: int) -> str:
+        since = utcnow() - timedelta(days=7)
+        stats = await self.users.get_stats(group_id)
+        top = await self.users.get_top_active(group_id, 5)
+        removed = await self.users.get_removed_since(group_id, since)
+
+        lines = [
+            "📅 <b>Еженедельный отчёт</b>\n",
+            format_stats(stats),
+            "\n🔥 <b>Самые активные:</b>",
+        ]
+        if top:
+            lines.extend(format_user_line(u, i) for i, u in enumerate(top, 1))
+        else:
+            lines.append("— нет данных —")
+
+        lines.append("\n🗑 <b>Удалённые за неделю:</b>")
+        if removed:
+            for i, r in enumerate(removed[:10], 1):
+                username = f"@{r.username}" if r.username else "—"
+                lines.append(f"{i}. {r.first_name} ({username})")
+        else:
+            lines.append("— нет —")
+
+        return "\n".join(lines)
+
+    async def monthly(self, group_id: int) -> str:
+        since = utcnow() - timedelta(days=30)
+        stats = await self.users.get_stats(group_id)
+        top = await self.users.get_top_active(group_id, 10)
+        removed = await self.users.get_removed_since(group_id, since)
+
+        lines = [
+            "📆 <b>Ежемесячный отчёт</b>\n",
+            format_stats(stats),
+            "\n🔥 <b>Топ активных за месяц:</b>",
+        ]
+        if top:
+            lines.extend(format_user_line(u, i) for i, u in enumerate(top, 1))
+        else:
+            lines.append("— нет данных —")
+
+        total_messages = sum(u.messages_count for u in top)
+        lines.append(f"\n💬 Сообщений у топ-10: <b>{total_messages}</b>")
+
+        lines.append("\n🗑 <b>Удалённые за месяц:</b>")
+        if removed:
+            lines.append(f"Всего: <b>{len(removed)}</b>")
+            for i, r in enumerate(removed[:15], 1):
+                username = f"@{r.username}" if r.username else "—"
+                lines.append(f"{i}. {r.first_name} ({username})")
+        else:
+            lines.append("— нет —")
+
+        return "\n".join(lines)
