@@ -8,3 +8,4 @@ class PanelStates(StatesGroup):
     whitelist_add = State()
     whitelist_remove = State()
     transfer_owner = State()
+    autoclean_period = State()

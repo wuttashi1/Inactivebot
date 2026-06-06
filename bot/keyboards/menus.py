@@ -131,7 +131,7 @@ class Keyboards:
         return builder.as_markup()
 
     @staticmethod
-    def autoclean(group_id: int, enabled: bool, days: int) -> InlineKeyboardMarkup:
+    def autoclean(group_id: int, enabled: bool, period_seconds: int) -> InlineKeyboardMarkup:
         builder = InlineKeyboardBuilder()
         builder.button(
             text="🟢 Включить" if not enabled else "✅ Включено",
@@ -142,11 +142,15 @@ class Keyboards:
             callback_data=AutoCleanCb(action="toggle", group_id=group_id, enabled=0).pack(),
         )
         for d in (30, 60, 90):
-            mark = "✓ " if days == d else ""
+            mark = "✓ " if period_seconds == d * 86400 else ""
             builder.button(
                 text=f"{mark}⏱ {d} дней",
                 callback_data=AutoCleanCb(action="period", group_id=group_id, days=d).pack(),
             )
+        builder.button(
+            text="✏️ Свой период",
+            callback_data=AutoCleanCb(action="custom", group_id=group_id).pack(),
+        )
         builder.button(text="⬅️ Назад", callback_data=MenuCb(action="settings", group_id=group_id).pack())
         builder.adjust(2)
         return builder.as_markup()

@@ -1,5 +1,6 @@
 import logging
 import re
+from datetime import timedelta
 
 from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
@@ -29,11 +30,29 @@ from bot.services.reports import ReportService, format_inactive_list, format_sta
 from bot.services.warnings import WarningService
 from bot.services.binding import start_bind
 from bot.states import PanelStates
+from bot.utils.duration import DurationParseError, format_duration, parse_duration
 
 logger = logging.getLogger(__name__)
 router = Router()
 
 USER_ID_PATTERN = re.compile(r"^\d{5,}$")
+
+
+def _group_period_seconds(group: Group | None) -> int:
+    if group and group.autoclean_interval_seconds:
+        return group.autoclean_interval_seconds
+    return (group.autoclean_days if group else 30) * 86400
+
+
+def _autoclean_text(group: Group | None) -> str:
+    status = "🟢 Включена" if group and group.autoclean_enabled else "🔴 Выключена"
+    period = GroupRepository.autoclean_period(group) if group else timedelta(days=30)
+    return (
+        f"🔔 <b>Автоочистка неактивных</b>\n\n"
+        f"Статус: {status}\n"
+        f"Период: <b>{format_duration(period)}</b>\n\n"
+        f"<i>Примеры своего периода: 5h, 30d, 4sec, 2w</i>"
+    )
 
 
 async def _deny(callback: CallbackQuery) -> None:
@@ -252,12 +271,14 @@ async def menu_autoclean(callback: CallbackQuery, callback_data: MenuCb) -> None
         return
     async with async_session() as session:
         group = await GroupRepository(session).get(callback_data.group_id)
-    status = "🟢 Включена" if group and group.autoclean_enabled else "🔴 Выключена"
-    days = group.autoclean_days if group else 30
     await _edit_or_answer(
         callback,
-        f"🔔 <b>Автоочистка</b>\n\nСтатус: {status}\nПериод: <b>{days}</b> дней",
-        keyboards.autoclean(callback_data.group_id, group.autoclean_enabled if group else False, days),
+        _autoclean_text(group),
+        keyboards.autoclean(
+            callback_data.group_id,
+            group.autoclean_enabled if group else False,
+            _group_period_seconds(group),
+        ),
     )
     await callback.answer()
 
@@ -273,8 +294,8 @@ async def autoclean_toggle(callback: CallbackQuery, callback_data: AutoCleanCb) 
         group = await GroupRepository(session).get(callback_data.group_id)
     await _edit_or_answer(
         callback,
-        f"🔔 Автоочистка: {'🟢 включена' if enabled else '🔴 выключена'}",
-        keyboards.autoclean(callback_data.group_id, group.autoclean_enabled, group.autoclean_days),
+        _autoclean_text(group),
+        keyboards.autoclean(callback_data.group_id, group.autoclean_enabled, _group_period_seconds(group)),
     )
     await callback.answer()
 
@@ -289,12 +310,34 @@ async def autoclean_period(callback: CallbackQuery, callback_data: AutoCleanCb) 
         group = await repo.get(callback_data.group_id)
         await repo.set_autoclean(callback_data.group_id, group.autoclean_enabled if group else False, callback_data.days)
         group = await repo.get(callback_data.group_id)
-    await callback.answer(f"Период: {callback_data.days} дней")
+    label = format_duration(GroupRepository.autoclean_period(group))
+    await callback.answer(f"Период: {label}")
     await _edit_or_answer(
         callback,
-        f"🔔 <b>Автоочистка</b>\nПериод: <b>{group.autoclean_days}</b> дней",
-        keyboards.autoclean(callback_data.group_id, group.autoclean_enabled, group.autoclean_days),
+        _autoclean_text(group),
+        keyboards.autoclean(callback_data.group_id, group.autoclean_enabled, _group_period_seconds(group)),
     )
+
+
+@router.callback_query(AutoCleanCb.filter(F.action == "custom"))
+async def autoclean_custom_start(callback: CallbackQuery, callback_data: AutoCleanCb, state: FSMContext) -> None:
+    if not await require_group_admin(callback_data.group_id, callback.from_user.id):
+        await _deny(callback)
+        return
+    await state.set_state(PanelStates.autoclean_period)
+    await state.update_data(group_id=callback_data.group_id)
+    await _edit_or_answer(
+        callback,
+        "✏️ <b>Свой период автоочистки</b>\n\n"
+        "Отправьте значение, например:\n"
+        "• <code>5h</code> — 5 часов\n"
+        "• <code>30d</code> — 30 дней\n"
+        "• <code>4sec</code> — 4 секунды\n"
+        "• <code>2w</code> — 2 недели\n"
+        "• <code>7</code> — 7 дней",
+        keyboards.back(callback_data.group_id, "autoclean"),
+    )
+    await callback.answer()
 
 
 @router.callback_query(MenuCb.filter(F.action == "admins"))
@@ -623,6 +666,35 @@ async def whitelist_remove_finish(message: Message, state: FSMContext) -> None:
         await UserRepository(session).set_whitelist(group_id, target_id, False)
     await state.clear()
     await message.answer("✅ Удалён из белого списка", reply_markup=keyboards.whitelist_menu(group_id))
+
+
+@router.message(PanelStates.autoclean_period)
+async def autoclean_custom_finish(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    group_id = data["group_id"]
+    if not await require_group_admin(group_id, message.from_user.id):
+        await state.clear()
+        return
+    try:
+        period = parse_duration((message.text or "").strip())
+    except DurationParseError as exc:
+        await message.answer(f"❌ {exc}")
+        return
+    async with async_session() as session:
+        repo = GroupRepository(session)
+        group = await repo.get(group_id)
+        await repo.set_autoclean(group_id, group.autoclean_enabled if group else True, period)
+        group = await repo.get(group_id)
+    await state.clear()
+    label = format_duration(period)
+    await message.answer(
+        f"✅ Период автоочистки: <b>{label}</b>",
+        reply_markup=keyboards.autoclean(
+            group_id,
+            group.autoclean_enabled,
+            _group_period_seconds(group),
+        ),
+    )
 
 
 @router.message(PanelStates.transfer_owner)

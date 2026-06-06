@@ -36,7 +36,7 @@ HELP_TEXT = (
     "/rollcall — перекличка\n\n"
     "<b>Настройки</b>\n"
     "/autoclean on|off — вкл/выкл автоочистку\n"
-    "/autoclean 30d — период автоочистки\n\n"
+    "/autoclean 30d — свой период (5h, 4sec, 2w…)\n\n"
     "<b>Админы</b> (только owner)\n"
     "/addadmin @user — добавить\n"
     "/removeadmin @user — удалить\n"

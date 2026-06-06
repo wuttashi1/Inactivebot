@@ -19,7 +19,7 @@ class WarnCb(CallbackData, prefix="wn"):
 
 
 class AutoCleanCb(CallbackData, prefix="ac"):
-    action: str  # toggle | period
+    action: str  # toggle | period | custom
     group_id: int
     days: int = 0
     enabled: int = -1  # 0 off, 1 on
