@@ -53,8 +53,6 @@ async def cmd_start(message: Message) -> None:
     await show_panel(message, message.from_user.id)
 
 
-@router.message(F.chat.type == "private", F.text)
+@router.message(F.chat.type == "private", F.text, ~F.text.startswith("/"))
 async def private_fallback(message: Message) -> None:
-    if message.text and message.text.startswith("/"):
-        return
     await show_panel(message, message.from_user.id)

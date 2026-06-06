@@ -15,16 +15,20 @@ async def run_autoclean(bot: Bot) -> None:
     async with async_session() as session:
         groups = await GroupRepository(session).get_autoclean_groups()
         for group in groups:
-            await _clean_group(session, bot, group.group_id, group.autoclean_days)
+            period = GroupRepository.autoclean_period(group)
+            await _clean_group(session, bot, group.group_id, period)
 
 
-async def _clean_group(session: AsyncSession, bot: Bot, group_id: int, days: int) -> None:
+async def _clean_group(session: AsyncSession, bot: Bot, group_id: int, period) -> None:
+    from bot.utils.duration import format_duration
+
     service = CleanupService(session, bot)
-    result = await service.execute(group_id, days)
+    result = await service.execute(group_id, period)
     if not result.removed:
         return
+    label = format_duration(period)
     text = (
-        f"🤖 <b>Автоочистка</b> (>{days} дней)\n"
+        f"🤖 <b>Автоочистка</b> (>{label})\n"
         f"Удалено: <b>{len(result.removed)}</b> участников"
     )
     try:

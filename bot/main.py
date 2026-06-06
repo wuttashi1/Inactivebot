@@ -9,6 +9,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from bot.config import settings
 from bot.database import init_db
 from bot.handlers import setup_routers
+from bot.handlers.commands import setup_bot_commands
 from bot.logging_setup import setup_logging
 from bot.middleware.admin import AdminContextMiddleware
 from bot.scheduler import setup_scheduler
@@ -27,6 +28,8 @@ async def main() -> None:
     dp = Dispatcher(storage=MemoryStorage())
     dp.update.middleware(AdminContextMiddleware())
     dp.include_router(setup_routers())
+
+    await setup_bot_commands(bot)
 
     scheduler = setup_scheduler(bot)
     scheduler.start()

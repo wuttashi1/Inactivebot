@@ -1,12 +1,14 @@
 import logging
+from datetime import timedelta
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramForbiddenError
 
-from bot.keyboards.menus import keyboards
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.database.repository import UserRepository
+from bot.keyboards.menus import keyboards
+from bot.utils.duration import format_duration
 
 logger = logging.getLogger(__name__)
 
@@ -17,12 +19,14 @@ class WarningService:
         self.bot = bot
         self.users = UserRepository(session)
 
-    async def warn_inactive(self, group_id: int, days: int) -> tuple[int, int]:
-        inactive = await self.users.get_inactive(group_id, days, limit=200)
+    async def warn_inactive(self, group_id: int, period: timedelta | int) -> tuple[int, int]:
+        td = timedelta(days=period) if isinstance(period, int) else period
+        inactive = await self.users.get_inactive(group_id, td, limit=200)
         sent = 0
         failed = 0
+        label = format_duration(td)
         text = (
-            f"⚠️ Вы не проявляли активность более <b>{days}</b> дней.\n"
+            f"⚠️ Вы не проявляли активность более <b>{label}</b>.\n"
             "Если хотите остаться в сообществе, нажмите кнопку ниже."
         )
         for user in inactive:

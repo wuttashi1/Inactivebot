@@ -1,5 +1,6 @@
 import logging
 from dataclasses import dataclass
+from datetime import timedelta
 
 from aiogram import Bot
 from aiogram.enums import ChatMemberStatus
@@ -39,11 +40,11 @@ class CleanupService:
             return "admin"
         return None
 
-    async def preview(self, group_id: int, days: int) -> list[User]:
-        return await self.users.get_inactive(group_id, days, limit=100)
+    async def preview(self, group_id: int, period: timedelta | int) -> list[User]:
+        return await self.users.get_inactive(group_id, period, limit=100)
 
-    async def execute(self, group_id: int, days: int) -> CleanupResult:
-        candidates = await self.users.get_inactive(group_id, days, limit=500)
+    async def execute(self, group_id: int, period: timedelta | int) -> CleanupResult:
+        candidates = await self.users.get_inactive(group_id, period, limit=500)
         removed: list[User] = []
         skipped: list[tuple[User, str]] = []
         failed: list[tuple[User, str]] = []

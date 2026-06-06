@@ -55,12 +55,29 @@ class GroupRepository:
         assert group is not None
         return group
 
-    async def set_autoclean(self, group_id: int, enabled: bool, days: int | None = None) -> None:
+    async def set_autoclean(
+        self,
+        group_id: int,
+        enabled: bool,
+        period: timedelta | int | None = None,
+    ) -> None:
         values: dict = {"autoclean_enabled": enabled}
-        if days is not None:
-            values["autoclean_days"] = days
+        if period is not None:
+            if isinstance(period, int):
+                td = timedelta(days=period)
+            else:
+                td = period
+            seconds = int(td.total_seconds())
+            values["autoclean_interval_seconds"] = seconds
+            values["autoclean_days"] = max(1, seconds // 86400)
         await self.session.execute(update(Group).where(Group.group_id == group_id).values(**values))
         await self.session.commit()
+
+    @staticmethod
+    def autoclean_period(group: Group) -> timedelta:
+        if group.autoclean_interval_seconds:
+            return timedelta(seconds=group.autoclean_interval_seconds)
+        return timedelta(days=group.autoclean_days)
 
     async def get_autoclean_groups(self) -> list[Group]:
         stmt = select(Group).where(Group.autoclean_enabled.is_(True))
@@ -257,8 +274,15 @@ class UserRepository:
             "new_week": new_week or 0,
         }
 
-    async def get_inactive(self, group_id: int, days: int, limit: int = 50, offset: int = 0) -> list[User]:
-        cutoff = utcnow() - timedelta(days=days)
+    async def get_inactive(
+        self,
+        group_id: int,
+        period: timedelta | int,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[User]:
+        td = timedelta(days=period) if isinstance(period, int) else period
+        cutoff = utcnow() - td
         stmt = (
             select(User)
             .where(
@@ -274,8 +298,9 @@ class UserRepository:
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
-    async def count_inactive(self, group_id: int, days: int) -> int:
-        cutoff = utcnow() - timedelta(days=days)
+    async def count_inactive(self, group_id: int, period: timedelta | int) -> int:
+        td = timedelta(days=period) if isinstance(period, int) else period
+        cutoff = utcnow() - td
         count = await self.session.scalar(
             select(func.count()).select_from(User).where(
                 User.group_id == group_id,

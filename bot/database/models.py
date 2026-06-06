@@ -16,6 +16,7 @@ class Group(Base):
     owner_id: Mapped[int] = mapped_column(BigInteger, index=True)
     autoclean_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     autoclean_days: Mapped[int] = mapped_column(Integer, default=30)
+    autoclean_interval_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_primary: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

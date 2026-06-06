@@ -3,6 +3,7 @@ from datetime import timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.database.repository import UserRepository, utcnow
+from bot.utils.duration import format_duration
 
 
 def format_user_line(user, index: int | None = None) -> str:
@@ -26,8 +27,13 @@ def format_stats(stats: dict) -> str:
     )
 
 
-def format_inactive_list(users: list, days: int, title: str | None = None) -> str:
-    header = title or f"👥 Неактивные более {days} дней"
+def format_inactive_list(
+    users: list,
+    period: timedelta | int,
+    title: str | None = None,
+) -> str:
+    label = format_duration(timedelta(days=period)) if isinstance(period, int) else format_duration(period)
+    header = title or f"👥 Неактивные более {label}"
     if not users:
         return f"{header}\n\n✅ Неактивных не найдено."
     lines = [f"{header}\n", f"Найдено: <b>{len(users)}</b>\n"]
