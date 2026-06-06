@@ -4,7 +4,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.database.models import Admin, CleanupBackup, Group, User
+from bot.database.models import Admin, BotState, CleanupBackup, Group, User
 
 
 def utcnow() -> datetime:
@@ -81,6 +81,11 @@ class GroupRepository:
 
     async def get_autoclean_groups(self) -> list[Group]:
         stmt = select(Group).where(Group.autoclean_enabled.is_(True))
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_all_bound(self) -> list[Group]:
+        stmt = select(Group).order_by(Group.title)
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
@@ -378,3 +383,41 @@ class UserRepository:
         )
         self.session.add(backup)
         await self.session.commit()
+
+    async def list_active_users(self, group_id: int) -> list[User]:
+        stmt = select(User).where(User.group_id == group_id, User.is_active.is_(True))
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+
+class BotStateRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def get(self) -> BotState:
+        state = await self.session.get(BotState, 1)
+        if state is None:
+            state = BotState(id=1)
+            self.session.add(state)
+            await self.session.commit()
+        return state
+
+    async def record_shutdown(self) -> None:
+        state = await self.get()
+        state.last_shutdown_at = utcnow()
+        await self.session.commit()
+
+    async def record_startup(self) -> BotState:
+        state = await self.get()
+        state.last_startup_at = utcnow()
+        await self.session.commit()
+        return state
+
+    async def save_last_update_id(self, update_id: int) -> None:
+        state = await self.get()
+        state.last_update_id = update_id
+        await self.session.commit()
+
+    async def get_last_update_id(self) -> int | None:
+        state = await self.get()
+        return state.last_update_id

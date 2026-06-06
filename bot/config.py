@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://activity:activity@localhost:5432/activity_bot"
     log_level: str = "INFO"
     log_dir: str = str(_ROOT / "logs")
+    sync_on_startup: bool = True
+    sync_notify_owner: bool = True
 
 
 settings = Settings()

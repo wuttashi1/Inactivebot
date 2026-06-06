@@ -55,6 +55,17 @@ class Admin(Base):
     group: Mapped["Group"] = relationship(back_populates="admins")
 
 
+class BotState(Base):
+    """Глобальное состояние бота (одна строка, id=1)."""
+
+    __tablename__ = "bot_state"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    last_shutdown_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_startup_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_update_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
+
 class CleanupBackup(Base):
     __tablename__ = "cleanup_backups"
 

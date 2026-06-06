@@ -13,6 +13,7 @@ from bot.handlers.commands import setup_bot_commands
 from bot.logging_setup import setup_logging
 from bot.middleware.admin import AdminContextMiddleware
 from bot.scheduler import setup_scheduler
+from bot.services.sync import SyncService, record_shutdown
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,11 @@ async def main() -> None:
 
     await setup_bot_commands(bot)
 
+    if settings.sync_on_startup:
+        sync = SyncService(bot)
+        sync_result = await sync.run_startup_sync()
+        await sync.notify_owner(sync_result)
+
     scheduler = setup_scheduler(bot)
     scheduler.start()
     logger.info("Bot started")
@@ -38,6 +44,7 @@ async def main() -> None:
     try:
         await dp.start_polling(
             bot,
+            drop_pending_updates=False,
             allowed_updates=[
                 "message",
                 "callback_query",
@@ -47,6 +54,7 @@ async def main() -> None:
             ],
         )
     finally:
+        await record_shutdown()
         scheduler.shutdown(wait=False)
         await bot.session.close()
 
