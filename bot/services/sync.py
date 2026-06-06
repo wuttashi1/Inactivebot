@@ -20,11 +20,10 @@ SYNC_ALLOWED_UPDATES = [
     "chat_member",
 ]
 
-LEFT_STATUSES = {
+LEFT_STATUSES = frozenset({
     ChatMemberStatus.LEFT,
     ChatMemberStatus.KICKED,
-    ChatMemberStatus.BANNED,
-}
+})
 
 
 @dataclass
