@@ -2,24 +2,24 @@
 
 # Activity Manager
 
-Telegram-бот для управления активностью участников групп: отчёты, предупреждения и очистка неактивных участников.
+Telegram group activity manager with reports, inactivity warnings, member synchronization and scheduled cleanup.
 
-[Правила разработки](CONTRIBUTING.md) · [Ветки](https://github.com/wuttashi1/Inactivebot/branches)
+[Contributing](CONTRIBUTING.md) · [Branches](https://github.com/wuttashi1/Inactivebot/branches)
 
 </div>
 
 ---
 
-## Возможности
+## Features
 
-- Панель управления группами и доступом администраторов.
-- Учёт активности, отчёты и предупреждения.
-- Синхронизация участников и задачи по расписанию.
-- Хранение данных в PostgreSQL через SQLAlchemy.
+- Group management and administrator access controls.
+- Activity tracking, reports and inactivity warnings.
+- Member synchronization and scheduled tasks.
+- PostgreSQL storage through SQLAlchemy.
 
-## Запуск через Docker
+## Run with Docker
 
-Создайте `.env` в корне репозитория:
+Create a local `.env` in the repository root:
 
 ```dotenv
 BOT_TOKEN=replace_with_your_token
@@ -32,15 +32,15 @@ docker compose up -d --build
 docker compose logs -f bot
 ```
 
-Это конфигурация для локального запуска с параметрами базы из `docker-compose.yml`. Для сервера задайте собственный пароль и согласуйте его с `DATABASE_URL`. Добавьте бота администратором в группу и откройте `/start` в личном чате.
+These database settings match the local Compose configuration. For deployment, choose your own database password and update `DATABASE_URL` accordingly. Add the bot to your group as an administrator and open `/start` in a private chat.
 
-## Навигация
+## Project layout
 
-- `bot/handlers/` — команды и панели.
-- `bot/services/` — отчёты, предупреждения, синхронизация и очистка.
-- `bot/database/` — модели и запросы.
-- `bot/scheduler/` — фоновые задачи.
+- `bot/handlers/` — commands and panels.
+- `bot/services/` — reports, warnings, synchronization and cleanup.
+- `bot/database/` — models and queries.
+- `bot/scheduler/` — background jobs.
 
-## Разработка
+## Development
 
-Соглашения по веткам и изменениям: [CONTRIBUTING.md](CONTRIBUTING.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for branch and contribution guidelines.
